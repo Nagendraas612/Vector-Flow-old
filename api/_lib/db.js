@@ -11,7 +11,10 @@ export const prisma =
     log: process.env.NODE_ENV === 'development' ? ['error'] : ['error'],
   })
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+// Always keep the singleton on globalThis, in production too:
+// Vercel may reuse a warm function container, and a second client
+// would open a second pool against Neon.
+globalForPrisma.prisma = prisma
 
 export function ok(res, data, status = 200) {
   res.status(status).json({ ok: true, data })
