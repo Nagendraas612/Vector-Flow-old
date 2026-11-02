@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { ok, fail } from "@/lib/json";
+import { buildRegistrationMail, sendMail } from "@/lib/mail";
 
 export async function POST(request, { params }) {
   const session = getSession();
@@ -35,7 +36,37 @@ export async function POST(request, { params }) {
         paymentScreenshotUrl: body.paymentScreenshotUrl || null,
       },
     });
-    return ok({ registration }, 201);
+    // Registration mail: to this student only, never to the group.
+    // A mail failure must NOT fail the registration itself, so any
+    // mail error is recorded as a FAILED mail log and we still return
+    // the registration. A duplicate attempt never reaches here: it
+    // returns ALREADY_REGISTERED below, with no mail at all.
+    let mailStatus = "FAILED";
+    try {
+      const mail = buildRegistrationMail(event, registration);
+      const result = await sendMail({
+        to: registration.email,
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+      mailStatus = result.sent ? "SENT" : "FAILED";
+      await prisma.mailLog.create({
+        data: {
+          eventId: event.id,
+          userId: registration.userId,
+          toEmail: registration.email,
+          type: "REGISTRATION",
+          subject: mail.subject,
+          status: mailStatus,
+          error: result.sent ? null : result.error,
+          sentAt: result.sent ? new Date() : null,
+        },
+      });
+    } catch {
+      mailStatus = "FAILED";
+    }
+    return ok({ registration, mailStatus }, 201);
   } catch (e) {
     if (e && e.code === "P2002") return fail("ALREADY_REGISTERED", 400);
     return fail("INVALID_FILE", 400);
